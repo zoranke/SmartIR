@@ -1,9 +1,9 @@
 {
-  "domain": "smartir",
-  "name": "SmartIR",
-  "documentation": "https://github.com/smartHomeHub/SmartIR",
+  "domain": "smartrf",
+  "name": "SmartRF",
+  "documentation": "https://github.com/zoranke/SmartRF",
   "dependencies": [],
-  "codeowners": ["@smartHomeHub"],
+  "codeowners": ["@zoranke"],
   "requirements": ["aiofiles==0.5.0"],
   "homeassistant": "0.115.0",
   "updater": {
@@ -13,6 +13,7 @@
       "__init__.py",
       "climate.py",
       "media_player.py",
+      "cover.py",
       "fan.py",
       "controller.py",
       "manifest.json",
