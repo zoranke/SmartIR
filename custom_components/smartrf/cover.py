@@ -14,18 +14,17 @@ from homeassistant.components.cover import (
     CoverEntity,
 )
 from homeassistant.const import (
-    CONF_NAME, STATE_OPEN, STATE_CLOSED, STATE_UNKNOWN)
+    CONF_NAME, STATE_OPEN, STATE_OPENING, STATE_CLOSED, STATE_CLOSING, STATE_UNKNOWN)
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.restore_state import RestoreEntity
-from . import COMPONENT_ABS_DIR, Helper
-from .controller import get_controller
-
-_LOGGER = logging.getLogger(__name__)
-
 
 from homeassistant.helpers.event import track_utc_time_change, async_track_time_interval
 from homeassistant.helpers.event import async_track_state_change
 
+from . import COMPONENT_ABS_DIR, Helper
+from .controller import get_controller
+
+_LOGGER = logging.getLogger(__name__)
 
 DEFAULT_NAME = "SmartRF Cover"
 
@@ -35,12 +34,21 @@ CONF_CONTROLLER_DATA = "controller_data"
 CONF_TRAVEL_TIME = 'travel_time'
 CONF_POS_SENSOR = 'position_sensor'
 
+#CONF_COMMAND_OPEN = 'command_open'
+#CONF_COMMAND_CLOSE = 'command_close'
+#CONF_COMMAND_STOP = 'command_stop'
+
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_UNIQUE_ID): cv.string,
     vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
     vol.Required(CONF_DEVICE_CODE): cv.positive_int,
     vol.Required(CONF_CONTROLLER_DATA): cv.string,
-    vol.Optional(CONF_POS_SENSOR): cv.entity_id
+    vol.Optional(CONF_TRAVEL_TIME, default=None): cv.positive_int,
+    vol.Optional(CONF_POS_SENSOR): cv.entity_id,
+   
+#    vol.Optional(CONF_COMMAND_STOP, default=None): cv.string,
+#    vol.Optional(CONF_COMMAND_OPEN, default=None): cv.string,
+#    vol.Optional(CONF_COMMAND_CLOSE, default=None): cv.string,
 })
 
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
@@ -82,120 +90,49 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     async_add_entities([SmartRFCover(
         hass, config, device_data
     )])
-
-CONF_COMMAND_OPEN = 'command_open'
-CONF_COMMAND_CLOSE = 'command_close'
-CONF_COMMAND_STOP = 'command_stop'
-CONF_POS_SENSOR = 'position_sensor'
-CONF_TRAVEL_TIME = 'travel_time'
-
-
-COVERS_SCHEMA = vol.Schema({
-    vol.Optional(CONF_COMMAND_STOP, default=None): cv.string,
-    vol.Optional(CONF_COMMAND_OPEN, default=None): cv.string,
-    vol.Optional(CONF_COMMAND_CLOSE, default=None): cv.string,
-    vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
-    vol.Optional(CONF_TRAVEL_TIME, default=None): cv.positive_int,
-#    vol.Optional(CONF_POS_SENSOR, default=None): cv.entity_id,
-    vol.Optional(CONF_POS_SENSOR,): cv.entity_id,
-})
-
-
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {
-        vol.Optional(CONF_COVERS, default={}): vol.Schema(
-            {
-                cv.slug: COVERS_SCHEMA}),
-                    vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): cv.positive_int,
-                    vol.Required(CONF_HOST): cv.string,
-                    vol.Required(CONF_MAC): cv.string,
-            }
-)
-
-@asyncio.coroutine
-def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
-
-    import broadlink
-
-    devices = config.get(CONF_COVERS)
-    ip_addr = config.get(CONF_HOST)
-    mac_addr = binascii.unhexlify(
-        config.get(CONF_MAC).encode().replace(b':', b''))
-    broadlink_device = broadlink.rm((ip_addr, 80), mac_addr, None)
-
-    covers = []
-    for object_id, device_config in devices.items():
-        covers.append(
-            RMCover(
-                hass,
-                object_id,
-                broadlink_device,
-                device_config.get(CONF_NAME,object_id),
-                device_config.get(CONF_COMMAND_OPEN),
-                device_config.get(CONF_COMMAND_CLOSE),
-                device_config.get(CONF_COMMAND_STOP),
-                device_config.get(CONF_TRAVEL_TIME),
-                device_config.get(CONF_POS_SENSOR),
-            )
-        )
-
-    broadlink_device.timeout = config.get(CONF_TIMEOUT)
-    try:
-        broadlink_device.auth()
-    except socket.timeout:
-        _LOGGER.error("Failed to connect to Broadlink RM Device")
-
-    async_add_devices(covers, True)
-    return True
-
-
-class RMCover(CoverEntity,RestoreEntity):
-    """Representation of a cover."""
-
-    # pylint: disable=no-self-use
-    def __init__(self, hass, entity_id, device, name, cmd_open, cmd_close, 
-                    cmd_stop, travel_time, pos_entity_id):
-        """Initialize the cover."""
+class SmartRFCover(CoverEntity, RestoreEntity):
+    def __init__(self, hass, config, device_data):
         self.hass = hass
-        self.entity_id = async_generate_entity_id(
-            'cover.{}', entity_id, hass=hass)
-        self._name = name or entity_id
+        self._unique_id = config.get(CONF_UNIQUE_ID)
+        self._name = config.get(CONF_NAME)
+        self._device_code = config.get(CONF_DEVICE_CODE)
+        self._controller_data = config.get(CONF_CONTROLLER_DATA)
+        self._travel_time = config.get(CONF_TRAVEL_TIME)
+        self._pos_sensor = config.get(CONF_POS_SENSOR)
 
-        if travel_time:
-            self._position = 0
-            self._travel_time = travel_time
-            self._step = round(100.0 / travel_time ,2)
-            self._device_class = 'window'
-        else:
-            self._position = None
-            self._device_class = 'garage'
+        self._manufacturer = device_data['manufacturer']
+        self._supported_models = device_data['supportedModels']
+        self._supported_controller = device_data['supportedController']
+        self._commands_encoding = device_data['commandsEncoding']
+#        self._speed_list = [SPEED_OFF] + device_data['speed']
+        self._commands = device_data['commands']
+        
+#        self._speed = SPEED_OFF
+#        self._direction = None
+#        self._last_on_speed = None
+#        self._oscillating = None
+#        self._support_flags = SUPPORT_SET_SPEED
 
-        self._cmd_open = b64decode(cmd_open + "=====") if cmd_open else None
-        self._cmd_close = b64decode(cmd_close + "=====") if cmd_close else None
-        if cmd_stop:
-            self._cmd_stop = b64decode(cmd_stop + "=====")
-            self._supported_features=None
-        else:
-            self._position = None
-            self._supported_features=(SUPPORT_OPEN | SUPPORT_CLOSE)
-            self._device_class = 'garage'
+#        if (DIRECTION_REVERSE in self._commands and \
+#            DIRECTION_FORWARD in self._commands):
+#            self._direction = DIRECTION_REVERSE
+#            self._support_flags = (
+#                self._support_flags | SUPPORT_DIRECTION)
+#        if ('oscillate' in self._commands):
+#            self._oscillating = False
+#            self._support_flags = (
+#                self._support_flags | SUPPORT_OSCILLATE)
 
-        self._requested_closing = True
-        self._unsub_listener_cover = None
-        self._is_opening = False
-        self._is_closing = False
-        self._device = device
-        self._travel = 0
-        self._closed = False
-        self._delay = False
 
-        if pos_entity_id:
-            async_track_state_change(
-                hass, pos_entity_id, self._async_pos_changed)
-            
-            temp_state = hass.states.get(pos_entity_id)
-            if temp_state:
-                self._async_update_pos(temp_state)
+#        self._temp_lock = asyncio.Lock()
+#        self._on_by_remote = False
+
+        #Init the IR/RF controller
+        self._controller = get_controller(
+            self.hass,
+            self._supported_controller, 
+            self._commands_encoding,
+            self._controller_data)
     
     @callback
     def _async_update_pos(self, state):
@@ -379,35 +316,8 @@ class RMCover(CoverEntity,RestoreEntity):
                self.stop_cover()
             
             self.schedule_update_ha_state()
-
-
-    def _sendpacket(self, packet, retry=2):
-        """Send packet to device."""
-        if packet is None:
-            _LOGGER.debug("Empty packet")
-            return True
-        try:
-            self._device.send_data(packet)
-        except (socket.timeout, ValueError) as error:
-            if retry < 1:
-                _LOGGER.error(error)
-                return False
-            if not self._auth():
-                return False
-            return self._sendpacket(packet, retry-1)
-        return True
-
-    def _auth(self, retry=2):
-        try:
-            auth = self._device.auth()
-        except socket.timeout:
-            auth = False
-        if not auth and retry > 0:
-            return self._auth(retry-1)
-        return auth
-     # Update state of entity
-        self.async_write_ha_state()
-#    async def async_added_to_hass(self):
+            self.async_write_ha_state()
+    async def async_added_to_hass(self):
 #        await super().async_added_to_hass()
 #        last_state = await self.async_get_last_state()
 #        
