@@ -21,7 +21,7 @@ from .controller import get_controller
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_NAME = "SmartIR Fan"
+DEFAULT_NAME = "SmartRF Fan"
 
 CONF_UNIQUE_ID = 'unique_id'
 CONF_DEVICE_CODE = 'device_code'
@@ -54,7 +54,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
 
         try:
             codes_source = ("https://raw.githubusercontent.com/"
-                            "smartHomeHub/SmartIR/master/"
+                            "zoranke/SmartRF/master/"
                             "codes/fan/{}.json")
 
             await Helper.downloader(codes_source.format(device_code), device_json_path)
@@ -76,7 +76,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
         hass, config, device_data
     )])
 
-class SmartIRFan(FanEntity, RestoreEntity):
+class SmartRFFan(FanEntity, RestoreEntity):
     def __init__(self, hass, config, device_data):
         self.hass = hass
         self._unique_id = config.get(CONF_UNIQUE_ID)
