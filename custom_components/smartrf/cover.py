@@ -1,12 +1,22 @@
 import asyncio
+import json
 import logging
-import binascii
-import socket
 import os.path
 
 import voluptuous as vol
 
-from datetime import timedelta
+from homeassistant.components.cover import (
+    CoverEntity, PLATFORM_SCHEMA)
+from homeassistant.components.cover.const import (
+    STATE_OPEN, STATE_CLOSED)
+from homeassistant.const import (
+    CONF_NAME, STATE_OFF, STATE_ON, STATE_UNKNOWN)
+import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.restore_state import RestoreEntity
+from . import COMPONENT_ABS_DIR, Helper
+from .controller import get_controller
+
+_LOGGER = logging.getLogger(__name__)
 
 from homeassistant.core import callback
 #from homeassistant.helpers.event import async_track_utc_time_change, async_track_time_interval
