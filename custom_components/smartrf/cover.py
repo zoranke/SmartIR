@@ -6,23 +6,6 @@ import os.path
 import voluptuous as vol
 
 from homeassistant.components.cover import (
-    CoverEntity, PLATFORM_SCHEMA)
-from homeassistant.components.cover.const import (
-    STATE_OPEN, STATE_CLOSED)
-from homeassistant.const import (
-    CONF_NAME, STATE_OFF, STATE_ON, STATE_UNKNOWN)
-import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.restore_state import RestoreEntity
-from . import COMPONENT_ABS_DIR, Helper
-from .controller import get_controller
-
-_LOGGER = logging.getLogger(__name__)
-
-from homeassistant.core import callback
-#from homeassistant.helpers.event import async_track_utc_time_change, async_track_time_interval
-from homeassistant.helpers.event import track_utc_time_change, async_track_time_interval
-from homeassistant.helpers.event import async_track_state_change
-from homeassistant.components.cover import (
     ATTR_CURRENT_POSITION,
     ATTR_POSITION,
     SUPPORT_OPEN,
@@ -31,35 +14,81 @@ from homeassistant.components.cover import (
     CoverEntity,
 )
 from homeassistant.const import (
-    CONF_NAME,
-    CONF_HOST,
-    CONF_MAC,
-    CONF_TIMEOUT,
-    STATE_OPEN,
-    STATE_CLOSED,
-)
-
-
+    CONF_NAME, STATE_OPEN, STATE_CLOSED, STATE_UNKNOWN)
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.entity import async_generate_entity_id
 from homeassistant.helpers.restore_state import RestoreEntity
-
-from configparser import ConfigParser
-from base64 import b64encode, b64decode
-
-REQUIREMENTS = ['broadlink']
+from . import COMPONENT_ABS_DIR, Helper
+from .controller import get_controller
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_NAME = 'Broadlink Cover'
-DEFAULT_TIMEOUT = 10
+
+from homeassistant.helpers.event import track_utc_time_change, async_track_time_interval
+from homeassistant.helpers.event import async_track_state_change
+
+
+DEFAULT_NAME = "SmartRF Cover"
+
+CONF_UNIQUE_ID = 'unique_id'
+CONF_DEVICE_CODE = 'device_code'
+CONF_CONTROLLER_DATA = "controller_data"
+CONF_TRAVEL_TIME = 'travel_time'
+CONF_POS_SENSOR = 'position_sensor'
+
+PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
+    vol.Optional(CONF_UNIQUE_ID): cv.string,
+    vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
+    vol.Required(CONF_DEVICE_CODE): cv.positive_int,
+    vol.Required(CONF_CONTROLLER_DATA): cv.string,
+    vol.Optional(CONF_POS_SENSOR): cv.entity_id
+})
+
+async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+    """Set up the RF Cover platform."""
+    device_code = config.get(CONF_DEVICE_CODE)
+    device_files_subdir = os.path.join('codes', 'cover')
+    device_files_absdir = os.path.join(COMPONENT_ABS_DIR, device_files_subdir)
+
+    if not os.path.isdir(device_files_absdir):
+        os.makedirs(device_files_absdir)
+
+    device_json_filename = str(device_code) + '.json'
+    device_json_path = os.path.join(device_files_absdir, device_json_filename)
+
+    if not os.path.exists(device_json_path):
+        _LOGGER.warning("Couldn't find the device Json file. The component will " \
+                        "try to download it from the GitHub repo.")
+
+        try:
+            codes_source = ("https://raw.githubusercontent.com/"
+                            "zoranke/SmartRF/master/"
+                            "codes/cover/{}.json")
+
+            await Helper.downloader(codes_source.format(device_code), device_json_path)
+        except Exception:
+            _LOGGER.error("There was an error while downloading the device Json file. " \
+                          "Please check your internet connection or if the device code " \
+                          "exists on GitHub. If the problem still exists please " \
+                          "place the file manually in the proper directory.")
+            return
+
+    with open(device_json_path) as j:
+        try:
+            device_data = json.load(j)
+        except Exception:
+            _LOGGER.error("The device JSON file is invalid")
+            return
+
+    async_add_entities([SmartRFCover(
+        hass, config, device_data
+    )])
 
 CONF_COMMAND_OPEN = 'command_open'
 CONF_COMMAND_CLOSE = 'command_close'
 CONF_COMMAND_STOP = 'command_stop'
 CONF_POS_SENSOR = 'position_sensor'
 CONF_TRAVEL_TIME = 'travel_time'
-CONF_COVERS = 'covers'
+
 
 COVERS_SCHEMA = vol.Schema({
     vol.Optional(CONF_COMMAND_STOP, default=None): cv.string,
