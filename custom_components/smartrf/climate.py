@@ -23,7 +23,7 @@ from .controller import get_controller
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_NAME = "SmartIR Climate"
+DEFAULT_NAME = "SmartRF Climate"
 
 CONF_UNIQUE_ID = 'unique_id'
 CONF_DEVICE_CODE = 'device_code'
@@ -65,7 +65,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
 
         try:
             codes_source = ("https://raw.githubusercontent.com/"
-                            "smartHomeHub/SmartIR/master/"
+                            "zoranke/SmartRF/master/"
                             "codes/climate/{}.json")
 
             await Helper.downloader(codes_source.format(device_code), device_json_path)
@@ -83,11 +83,11 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
             _LOGGER.error("The device Json file is invalid")
             return
 
-    async_add_entities([SmartIRClimate(
+    async_add_entities([SmartRFClimate(
         hass, config, device_data
     )])
 
-class SmartIRClimate(ClimateEntity, RestoreEntity):
+class SmartRFClimate(ClimateEntity, RestoreEntity):
     def __init__(self, hass, config, device_data):
         self.hass = hass
         self._unique_id = config.get(CONF_UNIQUE_ID)
