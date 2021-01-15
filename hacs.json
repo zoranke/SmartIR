@@ -1,5 +1,5 @@
 {
-  "name": "SmartRF",
+  "name": "BroadlinkCover",
   "homeassistant": "0.115.0",
   "persistent_directory": "codes"
 }
