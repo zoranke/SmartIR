@@ -1,11 +1,13 @@
-"""Cover Time based, RF version."""
+import asyncio
+import json
 import logging
+import os.path
 
 import voluptuous as vol
 
+////////////////////////////////////
 from datetime import timedelta
 
-from homeassistant.core import callback
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.event import async_track_utc_time_change, async_track_time_interval
 from homeassistant.components.cover import (
@@ -22,19 +24,123 @@ from homeassistant.const import (
     SERVICE_STOP_COVER,
 )
 
+from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.restore_state import RestoreEntity
-
+from . import COMPONENT_ABS_DIR, Helper
+from .controller import get_controller
 _LOGGER = logging.getLogger(__name__)
 
-CONF_DEVICES = 'devices'
-CONF_NAME = 'name'
-CONF_ALIASES = 'aliases'
+DEFAULT_NAME = "Broadlink Cove"
+DEFAULT_DELAY = 0.5
+
+CONF_UNIQUE_ID = 'unique_id'
+CONF_DEVICE_CODE = 'device_code'
+CONF_CONTROLLER_DATA = "controller_data"
+CONF_DELAY = "delay"
+CONF_POST_SENSOR = 'post_sensor'
 CONF_TRAVELLING_TIME_DOWN = 'travelling_time_down'
 CONF_TRAVELLING_TIME_UP = 'travelling_time_up'
 CONF_SEND_STOP_AT_ENDS = 'send_stop_at_ends'
 DEFAULT_TRAVEL_TIME = 25
-DEFAULT_SEND_STOP_AT_ENDS = False
+
+CONF_OPEN_SCRIPT_ENTITY_ID = 'open_script_entity_id'
+CONF_CLOSE_SCRIPT_ENTITY_ID = 'close_script_entity_id'
+CONF_STOP_SCRIPT_ENTITY_ID = 'stop_script_entity_id'
+ATTR_CONFIDENT = 'confident'
+ATTR_POSITION = 'position'
+ATTR_ACTION = 'action'
+ATTR_POSITION_TYPE = 'position_type'
+ATTR_POSITION_TYPE_CURRENT = 'current'
+ATTR_POSITION_TYPE_TARGET = 'target'
+ATTR_UNCONFIRMED_STATE = 'unconfirmed_state'
+SERVICE_SET_KNOWN_POSITION = 'set_known_position'
+SERVICE_SET_KNOWN_ACTION = 'set_known_action'
+
+#SUPPORT_FLAGS = (
+#    SUPPORT_TARGET_TEMPERATURE | 
+#    SUPPORT_FAN_MODE
+#)
+
+PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
+    vol.Optional(CONF_UNIQUE_ID): cv.string,
+    vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
+    vol.Required(CONF_DEVICE_CODE): cv.positive_int,
+    vol.Required(CONF_CONTROLLER_DATA): cv.string,
+    vol.Optional(CONF_DELAY, default=DEFAULT_DELAY): cv.string,
+    vol.Optional(CONF_POST_SENSOR): cv.entity_id,
+    vol.Optional(CONF_ALIASES, default=[]): vol.All(cv.ensure_list, [cv.string]),
+    vol.Optional(CONF_TRAVELLING_TIME_DOWN, default=DEFAULT_TRAVEL_TIME): cv.positive_int,
+    vol.Optional(CONF_TRAVELLING_TIME_UP, default=DEFAULT_TRAVEL_TIME): cv.positive_int,
+    vol.Optional(CONF_SEND_STOP_AT_ENDS, default=DEFAULT_SEND_STOP_AT_ENDS): cv.boolean,
+})
+
+async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+    """Set up the Cocer platform."""
+    device_code = config.get(CONF_DEVICE_CODE)
+    device_files_subdir = os.path.join('codes', 'cocer')
+    device_files_absdir = os.path.join(COMPONENT_ABS_DIR, device_files_subdir)
+
+    if not os.path.isdir(device_files_absdir):
+        os.makedirs(device_files_absdir)
+
+    device_json_filename = str(device_code) + '.json'
+    device_json_path = os.path.join(device_files_absdir, device_json_filename)
+
+    if not os.path.exists(device_json_path):
+        _LOGGER.warning("Couldn't find the device Json file. The component will " \
+                        "try to download it from the GitHub repo.")
+
+        try:
+            codes_source = ("https://raw.githubusercontent.com/"
+                            "zoranke/BroadlinkCover/master/"
+                            "codes/cover/{}.json")
+
+            await Helper.downloader(codes_source.format(device_code), device_json_path)
+        except Exception:
+            _LOGGER.error("There was an error while downloading the device Json file. " \
+                          "Please check your internet connection or if the device code " \
+                          "exists on GitHub. If the problem still exists please " \
+                          "place the file manually in the proper directory.")
+            return
+
+    with open(device_json_path) as j:
+        try:
+            device_data = json.load(j)
+        except Exception:
+            _LOGGER.error("The device Json file is invalid")
+            return
+
+    async_add_entities([BroadlinkCover(
+        hass, config, device_data
+    )])
+
+ class BroadlinkCover(CocerEntity, RestoreEntity):
+    def __init__(self, hass, config, device_data):
+        self.hass = hass
+        self._unique_id = config.get(CONF_UNIQUE_ID)
+        self._name = config.get(CONF_NAME)
+        self._device_code = config.get(CONF_DEVICE_CODE)
+        self._controller_data = config.get(CONF_CONTROLLER_DATA)
+        self._delay = config.get(CONF_DELAY)
+        self._post_sensor = config.get(CONF_POST_SENSOR)
+        
+        self._travelling_time_down = config.get(CONF_TRAVELLING_TIME_DOWN)
+        self._travelling_time_up = config.get(CONF_TRAVELLING_TIME_UP)
+        self._send_stop_at_ends = config.get(CONF_SEND_STOP_AT_ENDS)
+        
+        
+        
+        self._manufacturer = device_data['manufacturer']
+        self._supported_models = device_data['supportedModels']
+        self._supported_controller = device_data['supportedController']
+        self._commands_encoding = device_data['commandsEncoding']
+        self._precision = device_data['precision']
+    
+    
+"""Cover Time based, RF version."""
+
+
 
 CONF_OPEN_SCRIPT_ENTITY_ID = 'open_script_entity_id'
 CONF_CLOSE_SCRIPT_ENTITY_ID = 'close_script_entity_id'
