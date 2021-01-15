@@ -1,180 +1,173 @@
-import asyncio
+"""Cover Time based, RF version."""
 import logging
-import binascii
-import socket
-import os.path
 
 import voluptuous as vol
 
 from datetime import timedelta
 
 from homeassistant.core import callback
-#from homeassistant.helpers.event import async_track_utc_time_change, async_track_time_interval
-from homeassistant.helpers.event import track_utc_time_change, async_track_time_interval
-from homeassistant.helpers.event import async_track_state_change
+from homeassistant.helpers import entity_platform
+from homeassistant.helpers.event import async_track_utc_time_change, async_track_time_interval
 from homeassistant.components.cover import (
     ATTR_CURRENT_POSITION,
     ATTR_POSITION,
-    SUPPORT_OPEN,
-    SUPPORT_CLOSE,
     PLATFORM_SCHEMA,
     CoverEntity,
 )
 from homeassistant.const import (
     CONF_NAME,
-    CONF_HOST,
-    CONF_MAC,
-    CONF_TIMEOUT,
-    STATE_OPEN,
-    STATE_CLOSED,
+    ATTR_ENTITY_ID,
+    SERVICE_CLOSE_COVER,
+    SERVICE_OPEN_COVER,
+    SERVICE_STOP_COVER,
 )
 
-
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.entity import async_generate_entity_id
 from homeassistant.helpers.restore_state import RestoreEntity
-
-from configparser import ConfigParser
-from base64 import b64encode, b64decode
-
-REQUIREMENTS = ['broadlink']
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_NAME = 'Broadlink Cover'
-DEFAULT_TIMEOUT = 10
+CONF_DEVICES = 'devices'
+CONF_NAME = 'name'
+CONF_ALIASES = 'aliases'
+CONF_TRAVELLING_TIME_DOWN = 'travelling_time_down'
+CONF_TRAVELLING_TIME_UP = 'travelling_time_up'
+CONF_SEND_STOP_AT_ENDS = 'send_stop_at_ends'
+DEFAULT_TRAVEL_TIME = 25
+DEFAULT_SEND_STOP_AT_ENDS = False
 
-CONF_COMMAND_OPEN = 'command_open'
-CONF_COMMAND_CLOSE = 'command_close'
-CONF_COMMAND_STOP = 'command_stop'
-CONF_POS_SENSOR = 'position_sensor'
-CONF_TRAVEL_TIME = 'travel_time'
-CONF_COVERS = 'covers'
-
-COVERS_SCHEMA = vol.Schema({
-    vol.Optional(CONF_COMMAND_STOP, default=None): cv.string,
-    vol.Optional(CONF_COMMAND_OPEN, default=None): cv.string,
-    vol.Optional(CONF_COMMAND_CLOSE, default=None): cv.string,
-    vol.Optional(CONF_NAME, default=DEFAULT_NAME): cv.string,
-    vol.Optional(CONF_TRAVEL_TIME, default=None): cv.positive_int,
-#    vol.Optional(CONF_POS_SENSOR, default=None): cv.entity_id,
-    vol.Optional(CONF_POS_SENSOR,): cv.entity_id,
-})
-
+CONF_OPEN_SCRIPT_ENTITY_ID = 'open_script_entity_id'
+CONF_CLOSE_SCRIPT_ENTITY_ID = 'close_script_entity_id'
+CONF_STOP_SCRIPT_ENTITY_ID = 'stop_script_entity_id'
+ATTR_CONFIDENT = 'confident'
+ATTR_POSITION = 'position'
+ATTR_ACTION = 'action'
+ATTR_POSITION_TYPE = 'position_type'
+ATTR_POSITION_TYPE_CURRENT = 'current'
+ATTR_POSITION_TYPE_TARGET = 'target'
+ATTR_UNCONFIRMED_STATE = 'unconfirmed_state'
+SERVICE_SET_KNOWN_POSITION = 'set_known_position'
+SERVICE_SET_KNOWN_ACTION = 'set_known_action'
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
-        vol.Optional(CONF_COVERS, default={}): vol.Schema(
+        vol.Optional(CONF_DEVICES, default={}): vol.Schema(
             {
-                cv.slug: COVERS_SCHEMA}),
-                    vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): cv.positive_int,
-                    vol.Required(CONF_HOST): cv.string,
-                    vol.Required(CONF_MAC): cv.string,
+                cv.string: {
+                    vol.Required(CONF_NAME): cv.string,
+                    vol.Required(CONF_OPEN_SCRIPT_ENTITY_ID): cv.entity_id,
+                    vol.Required(CONF_CLOSE_SCRIPT_ENTITY_ID): cv.entity_id,
+                    vol.Required(CONF_STOP_SCRIPT_ENTITY_ID): cv.entity_id,
+                    vol.Optional(CONF_ALIASES, default=[]): vol.All(cv.ensure_list, [cv.string]),
+                    vol.Optional(CONF_TRAVELLING_TIME_DOWN, default=DEFAULT_TRAVEL_TIME): cv.positive_int,
+                    vol.Optional(CONF_TRAVELLING_TIME_UP, default=DEFAULT_TRAVEL_TIME): cv.positive_int,
+                    vol.Optional(CONF_SEND_STOP_AT_ENDS, default=DEFAULT_SEND_STOP_AT_ENDS): cv.boolean,
+                }
             }
+        ),
+    }
 )
 
-@asyncio.coroutine
-def async_setup_platform(hass, config, async_add_devices, discovery_info=None):
-
-    import broadlink
-
-    devices = config.get(CONF_COVERS)
-    ip_addr = config.get(CONF_HOST)
-    mac_addr = binascii.unhexlify(
-        config.get(CONF_MAC).encode().replace(b':', b''))
-    broadlink_device = broadlink.rm((ip_addr, 80), mac_addr, None)
-
-    covers = []
-    for object_id, device_config in devices.items():
-        covers.append(
-            RMCover(
-                hass,
-                object_id,
-                broadlink_device,
-                device_config.get(CONF_NAME,object_id),
-                device_config.get(CONF_COMMAND_OPEN),
-                device_config.get(CONF_COMMAND_CLOSE),
-                device_config.get(CONF_COMMAND_STOP),
-                device_config.get(CONF_TRAVEL_TIME),
-                device_config.get(CONF_POS_SENSOR),
-            )
-        )
-
-    broadlink_device.timeout = config.get(CONF_TIMEOUT)
-    try:
-        broadlink_device.auth()
-    except socket.timeout:
-        _LOGGER.error("Failed to connect to Broadlink RM Device")
-
-    async_add_devices(covers, True)
-    return True
+POSITION_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+        vol.Required(ATTR_POSITION): cv.positive_int,
+        vol.Optional(ATTR_CONFIDENT, default=False): cv.boolean,
+        vol.Optional(ATTR_POSITION_TYPE, default=ATTR_POSITION_TYPE_TARGET): cv.string
+    }
+)
 
 
-class RMCover(CoverEntity,RestoreEntity):
-    """Representation of a cover."""
+ACTION_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENTITY_ID): cv.entity_ids,
+        vol.Required(ATTR_ACTION): cv.string
+    }
+)
 
-    # pylint: disable=no-self-use
-    def __init__(self, hass, entity_id, device, name, cmd_open, cmd_close, 
-                    cmd_stop, travel_time, pos_entity_id):
+
+DOMAIN = "cover_rf_time_based"
+
+def devices_from_config(domain_config):
+    """Parse configuration and add cover devices."""
+    devices = []
+    for device_id, config in domain_config[CONF_DEVICES].items():
+        name = config.pop(CONF_NAME)
+        travel_time_down = config.pop(CONF_TRAVELLING_TIME_DOWN)
+        travel_time_up = config.pop(CONF_TRAVELLING_TIME_UP)
+        open_script_entity_id = config.pop(CONF_OPEN_SCRIPT_ENTITY_ID)
+        close_script_entity_id = config.pop(CONF_CLOSE_SCRIPT_ENTITY_ID)
+        stop_script_entity_id = config.pop(CONF_STOP_SCRIPT_ENTITY_ID)
+        send_stop_at_ends = config.pop(CONF_SEND_STOP_AT_ENDS)
+        device = CoverTimeBased(device_id, name, travel_time_down, travel_time_up, open_script_entity_id, close_script_entity_id, stop_script_entity_id, send_stop_at_ends)
+        devices.append(device)
+    return devices
+
+
+
+async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+    """Set up the cover platform."""
+    async_add_entities(devices_from_config(config))
+
+    platform = entity_platform.current_platform.get()
+
+    platform.async_register_entity_service(
+        SERVICE_SET_KNOWN_POSITION, POSITION_SCHEMA, "set_known_position"
+    )
+
+    platform.async_register_entity_service(
+        SERVICE_SET_KNOWN_ACTION, ACTION_SCHEMA, "set_known_action"
+    )
+
+
+class CoverTimeBased(CoverEntity, RestoreEntity):
+    def __init__(self, device_id, name, travel_time_down, travel_time_up, open_script_entity_id, close_script_entity_id, stop_script_entity_id, send_stop_at_ends):
         """Initialize the cover."""
-        self.hass = hass
-        self.entity_id = async_generate_entity_id(
-            'cover.{}', entity_id, hass=hass)
-        self._name = name or entity_id
+        from xknx.devices import TravelCalculator
+        self._travel_time_down = travel_time_down
+        self._travel_time_up = travel_time_up
+        self._open_script_entity_id = open_script_entity_id
+        self._close_script_entity_id = close_script_entity_id 
+        self._stop_script_entity_id = stop_script_entity_id
+        self._send_stop_at_ends = send_stop_at_ends
+        self._assume_uncertain_position = True 
+        self._target_position = 0
+        self._processing_known_position = False
 
-        if travel_time:
-            self._position = 0
-            self._travel_time = travel_time
-            self._step = round(100.0 / travel_time ,2)
-            self._device_class = 'window'
+        if name:
+            self._name = name
         else:
-            self._position = None
-            self._device_class = 'garage'
+            self._name = device_id
 
-        self._cmd_open = b64decode(cmd_open + "=====") if cmd_open else None
-        self._cmd_close = b64decode(cmd_close + "=====") if cmd_close else None
-        if cmd_stop:
-            self._cmd_stop = b64decode(cmd_stop + "=====")
-            self._supported_features=None
-        else:
-            self._position = None
-            self._supported_features=(SUPPORT_OPEN | SUPPORT_CLOSE)
-            self._device_class = 'garage'
+        self._unsubscribe_auto_updater = None
 
-        self._requested_closing = True
-        self._unsub_listener_cover = None
-        self._is_opening = False
-        self._is_closing = False
-        self._device = device
-        self._travel = 0
-        self._closed = False
-        self._delay = False
+        self.tc = TravelCalculator(self._travel_time_down, self._travel_time_up)
 
-        if pos_entity_id:
-            async_track_state_change(
-                hass, pos_entity_id, self._async_pos_changed)
-            
-            temp_state = hass.states.get(pos_entity_id)
-            if temp_state:
-                self._async_update_pos(temp_state)
-    
-    @callback
-    def _async_update_pos(self, state):
-        if state.state in ('false', STATE_CLOSED, 'off'):
-            if self._device_class == 'window':
-                self._position = 0
-            self._closed = True
-        else:
-            self._closed = False
-            if self._position == 0:
-                self._position = 100
+    async def async_added_to_hass(self):
+        """ Only cover position and confidence in that matters."""
+        """ The rest is calculated from this attribute.        """
+        old_state = await self.async_get_last_state()
+        _LOGGER.debug(self._name + ': ' + 'async_added_to_hass :: oldState %s', old_state)
+        if (old_state is not None and self.tc is not None and old_state.attributes.get(ATTR_CURRENT_POSITION) is not None):
+            self.tc.set_position(int(old_state.attributes.get(ATTR_CURRENT_POSITION)))
+        if (old_state is not None and old_state.attributes.get(ATTR_UNCONFIRMED_STATE) is not None):
+         if type(old_state.attributes.get(ATTR_UNCONFIRMED_STATE)) == bool:
+           self._assume_uncertain_position = old_state.attributes.get(ATTR_UNCONFIRMED_STATE)
+         else:
+           self._assume_uncertain_position = str(old_state.attributes.get(ATTR_UNCONFIRMED_STATE)) == str(True)
 
-    @asyncio.coroutine
-    def _async_pos_changed(self, entity_id, old_state, new_state):
-        if new_state is None:
-            return
-        self._async_update_pos(new_state)
-        yield from self.async_update_ha_state()
+
+    def _handle_my_button(self):
+        """Handle the MY button press"""
+        if self.tc.is_traveling():
+            _LOGGER.debug(self._name + ': ' + '_handle_my_button :: button stops cover')
+            self.tc.stop()
+            self.stop_auto_updater()
+
+    @property
+    def unconfirmed_state(self):
+        """Return the assume state as a string to persist through restarts ."""
+        return str(self._assume_uncertain_position)
 
     @property
     def name(self):
@@ -182,199 +175,201 @@ class RMCover(CoverEntity,RestoreEntity):
         return self._name
 
     @property
-    def device_class(self):
-        """Return the class of this device, from component DEVICE_CLASSES."""
-        return self._device_class
-
-    @property
-    def supported_features(self):
-        """Flag supported features."""
-        if self._supported_features is not None:
-            return self._supported_features
-        return super().supported_features
-
-    @property
-    def should_poll(self):
-        """No polling needed for a demo cover."""
-        return False
+    def device_state_attributes(self):
+        """Return the device state attributes."""
+        attr = {}
+        if self._travel_time_down is not None:
+            attr[CONF_TRAVELLING_TIME_DOWN] = self._travel_time_down
+        if self._travel_time_up is not None:
+            attr[CONF_TRAVELLING_TIME_UP] = self._travel_time_up 
+        attr[ATTR_UNCONFIRMED_STATE] = str(self._assume_uncertain_position)
+        return attr
 
     @property
     def current_cover_position(self):
         """Return the current position of the cover."""
-        return self._position
-#######
+        return self.tc.current_position()
+
     @property
-    def is_closed(self):
-        """Return if the cover is closed."""
-        if self._position is None:
-            return self._closed
-        else:
-            return self._position == 0         
+    def is_opening(self):
+        """Return if the cover is opening or not."""
+        from xknx.devices import TravelStatus
+        return self.tc.is_traveling() and \
+               self.tc.travel_direction == TravelStatus.DIRECTION_UP
 
     @property
     def is_closing(self):
-        """Return if the cover is closing."""
-        return self._is_closing
-##############################
-    @property
-    def is_opened(self):
-        """Return if the cover is opened."""
-        if self._position is None:
-            return self._opened
-        else:
-            return self._position == 100
-##################
-    @property
-    def is_opening(self):
-        """Return if the cover is opening."""
-        return self._is_opening
+        """Return if the cover is closing or not."""
+        from xknx.devices import TravelStatus
+        return self.tc.is_traveling() and \
+               self.tc.travel_direction == TravelStatus.DIRECTION_DOWN
 
     @property
-    def device_class(self):
-        """Return the class of this device, from component DEVICE_CLASSES."""
-        return self._device_class
+    def is_closed(self):
+        """Return if the cover is closed."""
+        return self.tc.is_closed()
 
-    def close_cover(self, **kwargs):
-        """Close the cover."""
-        if self._position == 0:
-            return
-        elif self._position is None:
-            if self._sendpacket(self._cmd_close):
-                self._closed = True
-                self.schedule_update_ha_state()
-            return
+    @property
+    def assumed_state(self):
+        """Return True unless we have set position with confidence through send_know_position service."""
+        return self._assume_uncertain_position
+ 
+    async def async_set_cover_position(self, **kwargs):
+       """Move the cover to a specific position."""
+       if ATTR_POSITION in kwargs:
+           self._target_position = kwargs[ATTR_POSITION]
+           _LOGGER.debug(self._name + ': ' + 'async_set_cover_position: %d', self._target_position)
+           await self.set_position(self._target_position)
 
-        if self._sendpacket(self._cmd_close):
-            self._travel = self._travel_time + 1
-            self._is_closing = True
-            self._listen_cover()
-            self._requested_closing = True
-            self.schedule_update_ha_state()
+    async def async_close_cover(self, **kwargs):
+        """Turn the device close."""
+        _LOGGER.debug(self._name + ': ' + 'async_close_cover')
+        self.tc.start_travel_down()
+        self._target_position = 0
 
-    def open_cover(self, **kwargs):
-        """Open the cover."""
-        if self._position == 100:
-            return
-        elif self._position is None:
-            if self._sendpacket(self._cmd_open):
-#                self._closed = False
-                self._opened = True
-                self.schedule_update_ha_state()
-            return
+        self.start_auto_updater()
+        await self._async_handle_command(SERVICE_CLOSE_COVER)
 
-        if self._sendpacket(self._cmd_open):
-            self._travel = self._travel_time + 1
-            self._is_opening = True
-            self._listen_cover()
-            self._requested_closing = False
-#            self._requested_opening = True
-            self.schedule_update_ha_state()
+    async def async_open_cover(self, **kwargs):
+        """Turn the device open."""
+        _LOGGER.debug(self._name + ': ' + 'async_open_cover')
+        self.tc.start_travel_up()
+        self._target_position = 100
 
-    def set_cover_position(self, position, **kwargs):
-        """Move the cover to a specific position."""
-        if position <= 0:
-            self.close_cover()
-        elif position >= 100:
-            self.open_cover()
-        elif round(self._position) == round(position):
-            return
-        elif self._travel > 0:
-            return
+        self.start_auto_updater()
+        await self._async_handle_command(SERVICE_OPEN_COVER)
+
+    async def async_stop_cover(self, **kwargs):
+        """Turn the device stop."""
+        _LOGGER.debug(self._name + ': ' + 'async_stop_cover')
+        self._handle_my_button()
+        await self._async_handle_command(SERVICE_STOP_COVER)
+
+    async def set_position(self, position):
+        _LOGGER.debug(self._name + ': ' + 'set_position')
+        """Move cover to a designated position."""
+        current_position = self.tc.current_position()
+        _LOGGER.debug(self._name + ': ' + 'set_position :: current_position: %d, new_position: %d',
+                      current_position, position)
+        command = None
+        if position < current_position:
+            command = SERVICE_CLOSE_COVER
+        elif position > current_position:
+            command = SERVICE_OPEN_COVER
+        if command is not None:
+            self.start_auto_updater()
+            self.tc.start_travel(position)
+            _LOGGER.debug(self._name + ': ' + 'set_position :: command %s', command)
+            await self._async_handle_command(command)
+
+        return
+
+    def start_auto_updater(self):
+        """Start the autoupdater to update HASS while cover is moving."""
+        _LOGGER.debug(self._name + ': ' + 'start_auto_updater')
+        if self._unsubscribe_auto_updater is None:
+            _LOGGER.debug(self._name + ': ' + 'init _unsubscribe_auto_updater')
+            interval = timedelta(seconds=0.1)
+            self._unsubscribe_auto_updater = async_track_time_interval(
+                self.hass, self.auto_updater_hook, interval)
+
+    @callback
+    def auto_updater_hook(self, now):
+        """Call for the autoupdater."""
+        _LOGGER.debug(self._name + ': ' + 'auto_updater_hook')
+        self.async_schedule_update_ha_state()
+        if self.position_reached():
+            _LOGGER.debug(self._name + ': ' + 'auto_updater_hook :: position_reached')
+            self.stop_auto_updater()
+        self.hass.async_create_task(self.auto_stop_if_necessary())
+
+    def stop_auto_updater(self):
+        """Stop the autoupdater."""
+        _LOGGER.debug(self._name + ': ' + 'stop_auto_updater')
+        if self._unsubscribe_auto_updater is not None:
+            self._unsubscribe_auto_updater()
+            self._unsubscribe_auto_updater = None
+
+    def position_reached(self):
+        """Return if cover has reached its final position."""
+        return self.tc.position_reached()
+
+    async def set_known_action(self, **kwargs):
+        """We want to do a few things when we get a position"""
+        action = kwargs[ATTR_ACTION]
+        if action not in ["open","close","stop"]:
+          raise ValueError("action must be one of open, close or cover.")
+        if action == "stop":
+          self._handle_my_button()
+          return
+        if action == "open":
+          self.tc.start_travel_up()
+          self._target_position = 100
+        if action == "close":
+          self.tc.start_travel_down()
+          self._target_position = 0
+        self.start_auto_updater()
+
+    async def set_known_position(self, **kwargs):
+        """We want to do a few things when we get a position"""
+        position = kwargs[ATTR_POSITION]
+        confident = kwargs[ATTR_CONFIDENT] if ATTR_CONFIDENT in kwargs else False
+        position_type = kwargs[ATTR_POSITION_TYPE] if ATTR_POSITION_TYPE in kwargs else ATTR_POSITION_TYPE_TARGET
+        if position_type not in [ATTR_POSITION_TYPE_TARGET, ATTR_POSITION_TYPE_CURRENT]:
+          raise ValueError(ATTR_POSITION_TYPE + " must be one of %s, %s", ATTR_POSITION_TYPE_TARGET,ATTR_POSITION_TYPE_CURRENT)
+        _LOGGER.debug(self._name + ': ' + 'set_known_position :: position  %d, confident %s, position_type %s, self.tc.is_traveling%s', position, str(confident), position_type, str(self.tc.is_traveling()))
+        self._assume_uncertain_position = not confident 
+        self._processing_known_position = True
+        if position_type == ATTR_POSITION_TYPE_TARGET:
+          self._target_position = position
+          position = self.current_cover_position
+
+
+        if self.tc.is_traveling():
+          self.tc.set_position(position)
+          self.tc.start_travel(self._target_position)
+          self.start_auto_updater()
         else:
-            steps = abs((position - self._position) / self._step)
-            if steps >= 1:        
-                self._travel = round(steps, 0)
+          if position_type == ATTR_POSITION_TYPE_TARGET:
+            self.tc.start_travel(self._target_position)
+            self.start_auto_updater()
+          else:
+            _LOGGER.debug(self._name + ': ' + 'set_known_position :: non_traveling position  %d, confident %s, position_type %s', position, str(confident), position_type)
+            self.tc.set_position(position)
+
+    async def auto_stop_if_necessary(self):
+        """Do auto stop if necessary."""
+        current_position = self.tc.current_position()
+        if self.position_reached() and not self._processing_known_position:
+            self.tc.stop()
+            if (current_position > 0) and (current_position < 100):
+                _LOGGER.debug(self._name + ': ' + 'auto_stop_if_necessary :: current_position between 1 and 99 :: calling stop command')
+                await self._async_handle_command(SERVICE_STOP_COVER)
             else:
-                self._travel = 1
-            self._requested_closing = position < self._position
-            if self._requested_closing:
-                if self._sendpacket(self._cmd_close):
-                    self._listen_cover()
-            else:
-                if self._sendpacket(self._cmd_open):
-                    self._listen_cover()
+                if self._send_stop_at_ends:
+                    _LOGGER.debug(self._name + ': ' + 'auto_stop_if_necessary :: send_stop_at_ends :: calling stop command')
+                    await self._async_handle_command(SERVICE_STOP_COVER)
 
+    async def _async_handle_command(self, command, *args):
+        """We have cover.* triggered command. Reset assumed state and known_position processsing and execute"""
+        self._assume_uncertain_position = True
+        self._processing_known_position = False
+        if command == "close_cover":
+            cmd = "DOWN"
+            self._state = False
+            await self.hass.services.async_call("homeassistant", "turn_on", {"entity_id": self._close_script_entity_id}, False)
 
-    def stop_cover(self, **kwargs):
-        """Stop the cover."""
-        self._is_closing = False
-        self._is_opening = False
-        if self._position is None:
-            self._sendpacket(self._cmd_stop)
-            return
-        elif self._position > 0 and self._position < 100:
-                self._sendpacket(self._cmd_stop)
+        elif command == "open_cover":
+            cmd = "UP"
+            self._state = True
+            await self.hass.services.async_call("homeassistant", "turn_on", {"entity_id": self._open_script_entity_id}, False)
 
-        if self._unsub_listener_cover is not None:
-            self._unsub_listener_cover()
-            self._unsub_listener_cover = None
+        elif command == "stop_cover":
+            cmd = "STOP"
+            self._state = True
+            await self.hass.services.async_call("homeassistant", "turn_on", {"entity_id": self._stop_script_entity_id}, False)
 
-    def _listen_cover(self):
-        """Listen for changes in cover."""
-        if self._unsub_listener_cover is None:
-            self._unsub_listener_cover = track_utc_time_change(
-                self.hass, self._time_changed_cover)
-            self._delay = True
-
-    def _time_changed_cover(self, now):
-        """Track time changes."""
-        if self._delay:
-            self._delay = False
-        else:
-            if self._requested_closing:
-                if round(self._position - self._step) > 0:
-                    self._position -= self._step
-                else:
-                    self._position = 0
-                    self._travel = 0
-            else:
-                if round(self._position + self._step) < 100:
-                    self._position += self._step
-                else:
-                    self._position = 100
-                    self._travel = 0
-
-            self._travel -= 1
-
-            if self._travel == 0:
-               self.stop_cover()
-            
-            self.schedule_update_ha_state()
-
-
-    def _sendpacket(self, packet, retry=2):
-        """Send packet to device."""
-        if packet is None:
-            _LOGGER.debug("Empty packet")
-            return True
-        try:
-            self._device.send_data(packet)
-        except (socket.timeout, ValueError) as error:
-            if retry < 1:
-                _LOGGER.error(error)
-                return False
-            if not self._auth():
-                return False
-            return self._sendpacket(packet, retry-1)
-        return True
-
-    def _auth(self, retry=2):
-        try:
-            auth = self._device.auth()
-        except socket.timeout:
-            auth = False
-        if not auth and retry > 0:
-            return self._auth(retry-1)
-        return auth
-     # Update state of entity
-        self.async_write_ha_state()
-##################################################################################
-
-    async def async_added_to_hass(self):
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
+        _LOGGER.debug(self._name + ': ' + '_async_handle_command :: %s', cmd)
         
-        if last_state:
-           self._position = last_state.attributes['current_position']
-        else:
-           self._position = None
+        # Update state of entity
+        self.async_write_ha_state()

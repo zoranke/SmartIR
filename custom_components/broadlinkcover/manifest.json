@@ -1,17 +1,9 @@
 {
-    "domain": "broadlink_cover",
-    "name": "Broadlink cover",
-    "documentation": "https://github.com/zoranke/Hassio-broadlink_cover",
-    "dependencies": [],
-    "codeowners": [ "@zoranke"],
-    "requirements": [],
-    "homeassistant": "0.115.0",
-    "updater": {
-        "version": "0.5.0",
-        "files": [
-        "cover.py",
-        "manifest.json",
-        "services.yaml"
-    ]
-  }
+  "domain": "cover_rf_time_based",
+  "name": "Cover Time Based RF (trigger script)",
+  "documentation": "https://github.com/nagyrobi/home-assistant-custom-components-cover-rf-time-based",
+  "requirements": [
+    "xknx==0.9.4"
+  ],
+  "codeowners": ["@davidramosweb", "@nagyrobi", "@Alfiegerner"]
 }
