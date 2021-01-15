@@ -1,4 +1,4 @@
 check_updates:
-  description: Check for BroadlinkCover updates.
+  description: Check for RMcover updates.
 update_component:
-  description: Update BroadlinkCover component.
+  description: Update RMcover component.

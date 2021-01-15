@@ -1,23 +1,17 @@
 {
-  "domain": "broadlinkcover",
-  "name": "BroadlinkCover",
-  "documentation": "https://github.com/zoranke/BroadlinkCover",
-  "dependencies": [],
-  "codeowners": ["@zoranke"],
-  "requirements": ["aiofiles==0.6.0"],
-  "homeassistant": "0.115.0",
-  "updater": {
-    "version": "1.15.1",
-    "releaseNotes": "-- Adds adjustable delay between commands for Broadlink controller",
-    "files": [
-      "__init__.py",
-      "climate.py",
-      "cover.py",
-      "media_player.py",
-      "fan.py",
-      "controller.py",
-      "manifest.json",
-      "services.yaml"
+    "domain": "broadlink_cover",
+    "name": "Broadlink cover",
+    "documentation": "https://github.com/zoranke/Hassio-broadlink_cover",
+    "dependencies": [],
+    "codeowners": [ "@zoranke"],
+    "requirements": [],
+    "homeassistant": "0.115.0",
+    "updater": {
+        "version": "0.5.0",
+        "files": [
+        "cover.py",
+        "manifest.json",
+        "services.yaml"
     ]
   }
 }
