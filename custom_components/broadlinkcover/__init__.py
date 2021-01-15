@@ -18,16 +18,16 @@ from homeassistant.helpers.typing import ConfigType
 
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = 'smartir'
+DOMAIN = 'broadlinkcover'
 VERSION = '1.15.1'
 MANIFEST_URL = (
     "https://raw.githubusercontent.com/"
-    "smartHomeHub/SmartIR/{}/"
-    "custom_components/smartir/manifest.json")
+    "zoranke/BroadlinkCover/{}/"
+    "custom_components/broadlinkcover/manifest.json")
 REMOTE_BASE_URL = (
-    "https://raw.githubusercontent.com/"
-    "smartHomeHub/SmartIR/{}/"
-    "custom_components/smartir/")
+   "https://raw.githubusercontent.com/"
+    "zoranke/BroadlinkCover/{}/"
+    "custom_components/broadlinkcover/")
 COMPONENT_ABS_DIR = os.path.dirname(
     os.path.abspath(__file__))
 
@@ -43,7 +43,7 @@ CONFIG_SCHEMA = vol.Schema({
 }, extra=vol.ALLOW_EXTRA)
 
 async def async_setup(hass, config):
-    """Set up the SmartIR component."""
+    """Set up the BroadlinkCover component."""
     conf = config.get(DOMAIN)
 
     if conf is None:
@@ -81,21 +81,21 @@ async def _update(hass, branch, do_update=False, notify_if_latest=True):
                         if notify_if_latest:
                             hass.components.persistent_notification.async_create(
                                 "You're already using the latest version!", 
-                                title='SmartIR')
+                                title='BroadlinkCover')
                         return
 
                     if StrictVersion(current_ha_version) < StrictVersion(min_ha_version):
                         hass.components.persistent_notification.async_create(
-                            "There is a new version of SmartIR integration, but it is **incompatible** "
-                            "with your system. Please first update Home Assistant.", title='SmartIR')
+                            "There is a new version of BroadlinkCover integration, but it is **incompatible** "
+                            "with your system. Please first update Home Assistant.", title='BroadlinkCover')
                         return
 
                     if do_update is False:
                         hass.components.persistent_notification.async_create(
-                            "A new version of SmartIR integration is available ({}). "
+                            "A new version of BroadlinkCover integration is available ({}). "
                             "Call the ``smartir.update_component`` service to update "
                             "the integration. \n\n **Release notes:** \n{}"
-                            .format(last_version, release_notes), title='SmartIR')
+                            .format(last_version, release_notes), title='BroadlinkCover')
                         return
 
                     # Begin update
@@ -114,12 +114,12 @@ async def _update(hass, branch, do_update=False, notify_if_latest=True):
 
                     if has_errors:
                         hass.components.persistent_notification.async_create(
-                            "There was an error updating one or more files of SmartIR. "
-                            "Please check the logs for more information.", title='SmartIR')
+                            "There was an error updating one or more files of BroadlinkCover. "
+                            "Please check the logs for more information.", title='BroadlinkCover')
                     else:
                         hass.components.persistent_notification.async_create(
                             "Successfully updated to {}. Please restart Home Assistant."
-                            .format(last_version), title='SmartIR')
+                            .format(last_version), title='BroadlinkCover')
     except Exception:
        _LOGGER.error("An error occurred while checking for updates.")
 
